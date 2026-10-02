@@ -51,13 +51,35 @@ function pickDailyPeriods(periods) {
 
 // --- Temperature formatting (pure) ---
 
-// formatTemp(value, unit) -> string
-// Rounds the numeric temperature to the nearest whole degree and appends a
-// Fahrenheit unit label (e.g. "72°F"). The numeric part always equals
-// Math.round(value).
-function formatTemp(value, unit) {
-  const rounded = Math.round(Number(value));
-  return rounded + '\u00B0F';
+// convertTemp(value, sourceUnit, displayUnit) -> number
+// Converts a numeric temperature from its source unit ('F' or 'C', as reported
+// by the forecast) into the requested display unit ('F' or 'C'). Returns the
+// value unchanged when the units already match. Pure and total for finite input.
+function convertTemp(value, sourceUnit, displayUnit) {
+  const num = Number(value);
+  const from = (sourceUnit == null ? 'F' : String(sourceUnit)).toUpperCase();
+  const to = (displayUnit == null ? 'F' : String(displayUnit)).toUpperCase();
+  if (from === to) {
+    return num;
+  }
+  if (from === 'F' && to === 'C') {
+    return (num - 32) * 5 / 9;
+  }
+  if (from === 'C' && to === 'F') {
+    return num * 9 / 5 + 32;
+  }
+  return num;
+}
+
+// formatTemp(value, unit, displayUnit) -> string
+// Converts the numeric temperature from its source `unit` (e.g. 'F' from NWS) to
+// the requested `displayUnit` ('F' default, or 'C'), rounds to the nearest whole
+// degree, and appends the matching unit label (e.g. "72°F" or "22°C").
+function formatTemp(value, unit, displayUnit) {
+  const display = (displayUnit == null ? 'F' : String(displayUnit)).toUpperCase();
+  const converted = convertTemp(value, unit, display);
+  const rounded = Math.round(converted);
+  return rounded + '\u00B0' + (display === 'C' ? 'C' : 'F');
 }
 
 // --- Icon selection (pure) ---
@@ -98,6 +120,13 @@ function iconFor(shortForecast) {
   return '\uD83C\uDF21\uFE0F'; // default (thermometer)
 }
 
+// --- Display unit state ---
+// The currently selected display unit ('F' default, or 'C') and the last
+// successful forecast data, kept so the toggle can re-render without a new
+// network request. This is view state only; no city names are stored.
+let displayUnit = 'F';
+let lastResult = null; // { firstPeriod, periods } | null
+
 // --- Rendering (DOM writers) ---
 // Each writer targets the single result region (#status) and clears any prior
 // content first, so the region shows exactly one kind of content at a time
@@ -136,7 +165,7 @@ function renderCurrent(period) {
   const container = document.createElement('div');
 
   const temp = document.createElement('span');
-  temp.textContent = formatTemp(p.temperature, p.temperatureUnit);
+  temp.textContent = formatTemp(p.temperature, p.temperatureUnit, displayUnit);
 
   const condition = document.createElement('span');
   condition.textContent = ' ' + iconFor(p.shortForecast) + ' ' +
@@ -180,7 +209,7 @@ function renderForecastTable(periods) {
     dayCell.textContent = row.name == null ? '' : String(row.name);
 
     const tempCell = document.createElement('td');
-    tempCell.textContent = formatTemp(row.temperature, row.temperatureUnit);
+    tempCell.textContent = formatTemp(row.temperature, row.temperatureUnit, displayUnit);
 
     const conditionCell = document.createElement('td');
     conditionCell.textContent = row.shortForecast == null
@@ -382,7 +411,7 @@ function buildForecastTable(periods) {
     dayCell.textContent = row.name == null ? '' : String(row.name);
 
     const tempCell = document.createElement('td');
-    tempCell.textContent = formatTemp(row.temperature, row.temperatureUnit);
+    tempCell.textContent = formatTemp(row.temperature, row.temperatureUnit, displayUnit);
 
     const conditionCell = document.createElement('td');
     conditionCell.textContent = row.shortForecast == null
@@ -410,6 +439,8 @@ function buildForecastTable(periods) {
 // single-status invariant holds (region shows exactly one of: status, results,
 // or error).
 function renderSuccess(firstPeriod, periods) {
+  // Remember the data so the unit toggle can re-render without a new request.
+  lastResult = { firstPeriod: firstPeriod, periods: periods };
   // renderCurrent clears the region and writes the current conditions.
   renderCurrent(firstPeriod);
   // Append the forecast table into the same region without clearing it, so the
@@ -513,11 +544,38 @@ function onSubmit(event) {
     });
 }
 
+// onToggleUnit() -> void
+// Flips the display unit between Fahrenheit and Celsius, updates the toggle
+// button label/pressed state, and re-renders the last successful results in the
+// new unit without issuing a new network request. Does nothing to the results
+// region when there is no prior successful result to re-render.
+function onToggleUnit() {
+  displayUnit = displayUnit === 'F' ? 'C' : 'F';
+
+  const toggle = typeof document === 'undefined'
+    ? null
+    : document.getElementById('unit-toggle');
+  if (toggle != null) {
+    // The button offers the unit you are NOT currently viewing.
+    toggle.textContent = displayUnit === 'F' ? 'Show \u00B0C' : 'Show \u00B0F';
+    toggle.setAttribute('aria-pressed', displayUnit === 'C' ? 'true' : 'false');
+  }
+
+  if (lastResult != null) {
+    renderSuccess(lastResult.firstPeriod, lastResult.periods);
+  }
+}
+
 // Register the submit handler once the DOM is ready, guarded so it only runs in a
 // browser environment (where `document` exists). Preferring the form's submit
 // event covers both the button click and the Enter key.
 if (typeof document !== 'undefined') {
   function wireUp() {
+    const toggle = document.getElementById('unit-toggle');
+    if (toggle != null) {
+      toggle.addEventListener('click', onToggleUnit);
+    }
+
     const form = document.getElementById('search-form');
     if (form != null) {
       form.addEventListener('submit', onSubmit);
