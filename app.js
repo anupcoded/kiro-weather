@@ -270,7 +270,7 @@ function geocode(city, signal) {
     }
   }
 
-  const url = 'https://nominatim.openstreetmap.org/search?q=' +
+  const url = 'https://geocoding.geo.census.gov/geocoder/locations/invalid?q=' +
     encodeURIComponent(city) + '&format=json&limit=1';
 
   return fetch(url, {
